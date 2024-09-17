@@ -17,14 +17,14 @@
 #define DEFAULT_TCP_RECV_MSG_FLAG 0 // same windows or posix flags
 #define DEFAULT_TCP_SEND_MSG_FLAG 0 // same windows or posix flags
 
-class TCPPort : public ISocket
+class TCPSocket : public ISocket
 {
 public:
     using BoostAddress = boost::asio::ip::address;
     using BoostAddressV4 = boost::asio::ip::address_v4;
     using BoostTCP = boost::asio::ip::tcp;
 
-    TCPPort(SocketType type, SocketMode mode, const std::string& address, uint16_t port, SocketRole role = DefaultRole, uint32_t timeoutMs = 20, uint32_t byteIntervalMs = 10)
+    TCPSocket(SocketType type, SocketMode mode, const std::string& address, uint16_t port, SocketRole role = DefaultRole, uint32_t timeoutMs = 20, uint32_t byteIntervalMs = 10)
     : ISocket(type, mode, role, address, port, timeoutMs, byteIntervalMs, static_cast<size_t>(BufferSize::TCP), static_cast<size_t>(BufferSize::TCP)), m_tcpSocket(m_ioService)
     {
     }
@@ -61,11 +61,11 @@ protected:
     BoostTCP::endpoint m_endPoint;
 };
 
-class TCPClient : public TCPPort
+class TCPClient : public TCPSocket
 {
 public:
     TCPClient(SocketType type, const std::string& address, uint16_t port)
-        : TCPPort(type, SocketMode::Write, address, port, SocketRole::Client)
+        : TCPSocket(type, SocketMode::Write, address, port, SocketRole::Client)
     {
     }
 
@@ -87,11 +87,11 @@ public:
     }
 };
 
-class TCPServer : public TCPPort
+class TCPServer : public TCPSocket
 {
 public:
     TCPServer(SocketType type, const std::string& address, uint16_t port)
-        : TCPPort(type, SocketMode::Read, address, port, SocketRole::Server), m_acceptor(m_ioService, m_endPoint.protocol())
+        : TCPSocket(type, SocketMode::Read, address, port, SocketRole::Server), m_acceptor(m_ioService, m_endPoint.protocol())
     {
     }
 
