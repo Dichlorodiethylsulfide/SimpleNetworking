@@ -37,7 +37,6 @@ public:
 protected:
     SocketResult internalReadData(unsigned char* data, size_t bufferSize) override
     {
-        std::lock_guard lock(m_socketMutex);
         SocketResult result;
         result.success = CheckForError([&](boost::system::error_code& err)
         {
@@ -48,7 +47,6 @@ protected:
 
     SocketResult internalWriteData(unsigned char* data, size_t bufferSize) override
     {
-        std::lock_guard lock(m_socketMutex);
         SocketResult result;
         result.success = CheckForError([&](boost::system::error_code& err)
         {

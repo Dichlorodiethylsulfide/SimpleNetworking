@@ -274,6 +274,7 @@ protected:
 
     SocketResult checkedReadData(unsigned char* data, size_t bufferSize)
     {
+        std::lock_guard lock(m_socketMutex);
         if(CheckIsValid(SocketMode::Read, data, bufferSize) == false)
         {
             return {};
@@ -282,6 +283,7 @@ protected:
     }
     SocketResult checkedReadDataCallback(const ReceivedCallback& recvCallback, size_t responseSize)
     {
+        std::lock_guard lock(m_socketMutex);
         auto& recvBuffer = getRecvBuffer();
         if(CheckIsValid(SocketMode::Read, recvBuffer.data(), recvBuffer.size()) == false)
         {
@@ -296,6 +298,7 @@ protected:
     }
     SocketResult checkedWriteData(unsigned char* data, size_t bufferSize)
     {
+        std::lock_guard lock(m_socketMutex);
         if(CheckIsValid(SocketMode::Write, data, bufferSize) == false)
         {
             return {};

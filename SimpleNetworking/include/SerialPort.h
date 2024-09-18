@@ -105,8 +105,6 @@ protected:
             // if we are not reading continuously, we can flush
             FlushSerialReceive(m_serialPort);
         }
-        // Blocking
-        std::lock_guard lock(m_socketMutex);
         SocketResult result;
         result.success = CheckForError([&](auto& err)
         {
@@ -117,7 +115,6 @@ protected:
     
     SocketResult internalWriteData(unsigned char* data, size_t bufferSize) override
     {
-        std::lock_guard lock(m_socketMutex);
         SocketResult result;
         result.success = CheckForError([&](auto& err)
         {
