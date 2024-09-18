@@ -120,10 +120,6 @@ protected:
         {
             result.bytes = boost::asio::write(m_serialPort, boost::asio::buffer(data, bufferSize), err);
         });
-        if (result.bytes != bufferSize)
-        {
-            setLastErrorMessage("Write failed, wrote " + std::to_string(result.bytes) + " bytes, expected to write " + std::to_string(bufferSize));
-        }
         return result;
     }
     

@@ -303,7 +303,12 @@ protected:
         {
             return {};
         }
-        return internalWriteData(data, bufferSize);
+        SocketResult result = internalWriteData(data, bufferSize);
+        if (result.bytes != bufferSize)
+        {
+            setLastErrorMessage("Write failed, wrote " + std::to_string(result.bytes) + " bytes, expected to write " + std::to_string(bufferSize));
+        }
+        return result;
     }
     
     bool CheckIsValid(SocketMode expectedMode, unsigned char* data, size_t bufferSize)
