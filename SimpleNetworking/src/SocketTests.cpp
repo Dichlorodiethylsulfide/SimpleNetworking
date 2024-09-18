@@ -8,7 +8,8 @@
 //
 #pragma optimize("", off)
 
-#include "external/catch/catch/catch.hpp"
+#define CATCH_CONFIG_MAIN
+#include "catch/catch.hpp"
 
 #include <thread>
 #include <chrono>
@@ -59,7 +60,7 @@ void PrepareReadWriteUDPPorts(std::shared_ptr<UDPServer>& readPort, std::shared_
 
 
 std::string Data = "Hello World!";
-auto successCallback = [=](unsigned char* buffer, size_t size, bool valid)
+auto successCallback = [](unsigned char* buffer, size_t size, bool valid)
 {
     if(!valid)
     {

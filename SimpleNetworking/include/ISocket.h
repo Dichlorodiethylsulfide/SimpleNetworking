@@ -16,6 +16,7 @@
 #include <boost/asio.hpp>
 #include <future>
 #include <map>
+#include <exception>
 
 using namespace boost::asio;
 
@@ -214,7 +215,7 @@ public:
 
     virtual void setAddress(const std::string& address)
     {
-        throw std::exception("Not Implemented");
+        throw std::bad_exception();
     }
 
     virtual void close()
@@ -225,7 +226,7 @@ public:
     
     AsyncSocketResult readData(unsigned char* data, size_t bufferSize)
     {
-        auto task = std::async(std::launch::async, [=]()
+        auto task = std::async(std::launch::async, [this, data, bufferSize]()
         {
             return checkedReadData(data, bufferSize);
         });
@@ -249,7 +250,7 @@ public:
     }
     AsyncSocketResult writeData(unsigned char* data, size_t bufferSize)
     {
-        auto task = std::async(std::launch::async, [=]()
+        auto task = std::async(std::launch::async, [this, data, bufferSize]()
         {
             return checkedWriteData(data, bufferSize);
         });
