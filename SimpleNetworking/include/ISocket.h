@@ -170,6 +170,32 @@ struct SocketResult
     }
 };
 
+struct SocketEvents
+{
+    using PreCallback = std::function<void()>;
+    using PostCallback = std::function<void(uint8_t*, SocketResult&)>;
+
+    PreCallback preCallback;
+    PostCallback postCallback;
+
+    inline void preEvent() const { if(preCallback) { preCallback(); } }
+    inline void postEvent(uint8_t* data, SocketResult& result) const { if(postCallback) { postCallback(data, result); } }
+};
+
+struct SocketEventCallbacks
+{
+    using OpenCallback = std::function<void()>;
+    using CloseCallback = std::function<void()>;
+
+    OpenCallback openCallback;
+    CloseCallback closeCallback;
+    SocketEvents read;
+    SocketEvents write;
+
+    inline void opened() const { if(openCallback) { openCallback(); } }
+    inline void closed() const { if(closeCallback) { closeCallback(); } }
+};
+
 class ISocket : public NetworkingBuffer, public NetworkingErrorHandler
 {
 public:
@@ -187,7 +213,15 @@ public:
     {
     }
 
-    virtual bool open() = 0;
+    virtual bool open()
+    {
+        std::lock_guard lock(m_socketMutex);
+        if(isOpen())
+        {
+            m_socketEventCallbacks.opened();
+        }
+        return isOpen();
+    }
     
     virtual bool isOpen() const = 0;
 
@@ -198,14 +232,14 @@ public:
         // check if valid IPv4
         if(m_role == SocketRole::Client)
         {
-            if (m_address == "localhost" || m_address == "")
+            if (m_address == "localhost" || m_address.empty())
             {
                 return "127.0.0.1";
             }
         }
         else if(m_role == SocketRole::Server)
         {
-            if (m_address == "localhost") // blank "" is permissible on servers
+            if (m_address == "localhost") // empty address is permissible on servers
             {
                 return "127.0.0.1";
             }
@@ -220,8 +254,10 @@ public:
 
     virtual void close()
     {
+        std::lock_guard lock(m_socketMutex);
         m_ioService.stop();
         m_initialised = false;
+        m_socketEventCallbacks.closed();
     }
     
     AsyncSocketResult readData(unsigned char* data, size_t bufferSize)
@@ -236,18 +272,7 @@ public:
         }
         return task.share();
     }
-    AsyncSocketResult readDataCallback(const ReceivedCallback& recvCallback, size_t responseSize)
-    {
-        auto task = std::async(std::launch::async, [this, recvCallback, responseSize]()
-        {
-            return checkedReadDataCallback(recvCallback, responseSize);
-        });
-        if(m_type == SocketType::Blocking)
-        {
-            task.wait();
-        }
-        return task.share();
-    }
+
     AsyncSocketResult writeData(unsigned char* data, size_t bufferSize)
     {
         auto task = std::async(std::launch::async, [this, data, bufferSize]()
@@ -261,10 +286,27 @@ public:
         return task.share();
     }
 
+    AsyncSocketResult readData()
+    {
+        auto& recvBuffer = getRecvBuffer();
+        return readData(recvBuffer.data(), recvBuffer.size());
+    }
+
+    AsyncSocketResult writeData()
+    {
+        auto& sendBuffer = getSendBuffer();
+        return writeData(sendBuffer.data(), sendBuffer.size());
+    }
+
     template<typename T, std::conditional_t<std::is_integral_v<std::remove_cv_t<T>> && !std::is_pointer_v<std::remove_cv_t<T>>, std::remove_cv_t<T>, void> = 0>
     AsyncSocketResult send(T value)
     {
         return writeData((unsigned char*)&value, sizeof(T));
+    }
+
+    SocketEventCallbacks& getSocketEventCallbacks()
+    {
+        return m_socketEventCallbacks;
     }
     
 protected:
@@ -279,21 +321,9 @@ protected:
         {
             return {};
         }
-        return internalReadData(data, bufferSize);
-    }
-    SocketResult checkedReadDataCallback(const ReceivedCallback& recvCallback, size_t responseSize)
-    {
-        std::lock_guard lock(m_socketMutex);
-        auto& recvBuffer = getRecvBuffer();
-        if(CheckIsValid(SocketMode::Read, recvBuffer.data(), recvBuffer.size()) == false)
-        {
-            return {};
-        }
-        auto result = internalReadData(recvBuffer.data(), recvBuffer.size());
-        if (recvCallback != nullptr)
-        {
-            result.success &= recvCallback(recvBuffer.data(), result.bytes, (result.success && result.bytes >= responseSize));
-        }
+        m_socketEventCallbacks.read.preEvent();
+        auto result = internalReadData(data, bufferSize);
+        m_socketEventCallbacks.read.postEvent(data, result);
         return result;
     }
     SocketResult checkedWriteData(unsigned char* data, size_t bufferSize)
@@ -303,11 +333,13 @@ protected:
         {
             return {};
         }
+        m_socketEventCallbacks.write.preEvent();
         SocketResult result = internalWriteData(data, bufferSize);
         if (result.bytes != bufferSize)
         {
             setLastErrorMessage("Write failed, wrote " + std::to_string(result.bytes) + " bytes, expected to write " + std::to_string(bufferSize));
         }
+        m_socketEventCallbacks.write.postEvent(data, result);
         return result;
     }
     
@@ -353,6 +385,7 @@ protected:
     SocketMode m_mode = SocketMode::Read;
     SocketType m_type = SocketType::Blocking;
     SocketRole m_role = SocketRole::Client;
+    SocketEventCallbacks m_socketEventCallbacks {};
     
     // Boost - general
     // sockets and endpoints should be per-type udp::socket for UDPSocket type

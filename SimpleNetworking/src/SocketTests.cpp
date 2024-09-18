@@ -18,7 +18,7 @@
 #include "../include/SerialPort.h"
 #include "../include/UDPSocket.h"
 
-#define SERIAL_PORT_RUNNING 0
+#define SERIAL_PORT_RUNNING 1
 
 #define SERIAL_PORT_READ 1
 #define SERIAL_PORT_WRITE 2
@@ -60,38 +60,48 @@ void PrepareReadWriteUDPPorts(std::shared_ptr<UDPServer>& readPort, std::shared_
 
 
 std::string Data = "Hello World!";
-auto successCallback = [](unsigned char* buffer, size_t size, bool valid)
+
+auto postReadCallback = [](uint8_t* data, SocketResult& result)
 {
-    if(!valid)
-    {
-        REQUIRE(false);
-    }
-    REQUIRE((std::string((char*)buffer) == Data));
-    return true;
+    REQUIRE(result.success);
+    REQUIRE(std::string((char*)data) == Data);
+};
+
+auto postReadFailedCallback = [](uint8_t* data, SocketResult& result)
+{
+    REQUIRE_FALSE(result.success);
 };
 
 #if SERIAL_PORT_RUNNING
 
 TEST_CASE("Do blocking serial ports work?", "[sockets]")
 {
+    std::condition_variable readCondition;
     std::shared_ptr<SerialPort> readPort, writePort;
     PrepareReadWriteSerialPorts(readPort, writePort, SocketType::Blocking);
-    std::mutex m_readMutex;
-    std::unique_lock m_readLock(m_readMutex);
-    std::condition_variable m_readCondition;
-    // Blocking read and write at the same time doesn't work (obviously) so just shunt the readPort onto another thread
-    std::thread* readThread = new std::thread([&m_readCondition, readPort]()
+    auto& readSocketEvents = readPort->getSocketEventCallbacks();
+    readSocketEvents.read.postCallback = postReadCallback;
+    readSocketEvents.read.preCallback = [&readCondition]()
     {
-        REQUIRE(readPort->readDataCallback(successCallback, Data.length()).get());
-        REQUIRE(readPort->getLastErrorMessage().empty());
-        m_readCondition.notify_one();
+        readCondition.notify_one();
+    };
+    // Blocking read and write at the same time doesn't work (obviously) so just shunt the writePort onto another thread
+    auto* writeThread = new std::thread([&readCondition, writePort]()
+    {
+        std::mutex readMutex;
+        std::unique_lock readLock(readMutex);
+        readCondition.wait(readLock);
+        using namespace std::chrono;
+        std::this_thread::sleep_for(5s);
+        REQUIRE(writePort->writeData((unsigned char*)Data.data(), Data.length()).get());
+        REQUIRE(writePort->getLastErrorMessage().empty());
     });
     using namespace std::chrono;
-    std::this_thread::sleep_for(1s);
-    REQUIRE(writePort->writeData((unsigned char*)Data.data(), Data.length()).get());
-    m_readCondition.wait(m_readLock);
-    readThread->join();
-    delete readThread;
+    std::this_thread::sleep_for(5s);
+    REQUIRE(readPort->readData().get());
+    REQUIRE(readPort->getLastErrorMessage().empty());
+    writeThread->join();
+    delete writeThread;
     StopReadWritePorts(readPort, writePort);
 }
 
@@ -99,9 +109,16 @@ TEST_CASE("Do non-blocking serial ports work?", "[sockets]")
 {
     std::shared_ptr<SerialPort> readPort, writePort;
     PrepareReadWriteSerialPorts(readPort, writePort, SocketType::NonBlocking);
-    auto readPortFuture = readPort->readDataCallback(successCallback, Data.length());
-    using namespace std::chrono;
-    std::this_thread::sleep_for(1s);
+    auto& readSocketEvents = readPort->getSocketEventCallbacks();
+    auto& writeSocketEvents = writePort->getSocketEventCallbacks();
+    readSocketEvents.read.postCallback = postReadCallback;
+    ISocket::AsyncSocketResult readPortFuture;
+    writeSocketEvents.write.preCallback = [&readPortFuture, readPort]() // before writing, prepare the read future
+    {
+        readPortFuture = readPort->readData();
+        using namespace std::chrono;
+        std::this_thread::sleep_for(1s);
+    };
     auto writePortFuture = writePort->writeData((unsigned char*)Data.data(), Data.length());
     REQUIRE(writePortFuture.get());
     REQUIRE(readPortFuture.get());
@@ -116,14 +133,9 @@ TEST_CASE("Can we write on Read Serial Ports and vice versa?", "[sockets]")
     // However, we shouldn't be able to writeData on a readPort and vice versa
     REQUIRE_FALSE(readPort->writeData((unsigned char*)Data.data(), Data.length()).get());
     REQUIRE_FALSE(readPort->getLastErrorMessage().empty());
-    REQUIRE_FALSE(writePort->readDataCallback([&](unsigned char* buffer, size_t size, bool valid)
-    {
-        if(valid)
-        {
-            REQUIRE(false);
-        }
-        return true; // we can return true and still pass the REQUIRE_FALSE because reading the actual bytes will have failed
-    }, Data.length()).get()); // don't bother saving the Future, just call get()
+    auto& socketEvents = readPort->getSocketEventCallbacks();
+    socketEvents.read.postCallback = postReadFailedCallback;
+    REQUIRE_FALSE(writePort->readData().get());
     // We want to make sure an error was logged
     REQUIRE_FALSE(writePort->getLastErrorMessage().empty());
     readPort->close();
@@ -150,24 +162,33 @@ TEST_CASE("Can we use uninitialised Serial ports?", "[sockets]")
 
 TEST_CASE("Do blocking UDP ports work?", "[sockets]")
 {
+    std::condition_variable readCondition;
     std::shared_ptr<UDPServer> readPort;
     std::shared_ptr<UDPClient> writePort;
     PrepareReadWriteUDPPorts(readPort, writePort, SocketType::Blocking);
-    std::mutex m_readMutex;
-    std::unique_lock m_readLock(m_readMutex);
-    std::condition_variable m_readCondition;
-    // Blocking read and write at the same time doesn't work (obviously) so just shunt the readPort onto another thread
-    std::thread* readThread = new std::thread([&m_readCondition, &readPort]()
+    auto& readSocketEvents = readPort->getSocketEventCallbacks();
+    readSocketEvents.read.postCallback = postReadCallback;
+    readSocketEvents.read.preCallback = [&readCondition]()
     {
-        REQUIRE(readPort->readDataCallback(successCallback, Data.length()).get());
-        REQUIRE(readPort->getLastErrorMessage().empty());
-        m_readCondition.notify_one();
+        readCondition.notify_one();
+    };
+    // Blocking read and write at the same time doesn't work (obviously) so just shunt the writePort onto another thread
+    auto* writeThread = new std::thread([&readCondition, writePort]()
+    {
+        std::mutex readMutex;
+        std::unique_lock readLock(readMutex);
+        readCondition.wait(readLock);
+        using namespace std::chrono;
+        std::this_thread::sleep_for(5s);
+        REQUIRE(writePort->writeData((unsigned char*)Data.data(), Data.length()).get());
+        REQUIRE(writePort->getLastErrorMessage().empty());
     });
     using namespace std::chrono;
     std::this_thread::sleep_for(5s);
-    REQUIRE(writePort->writeData((unsigned char*)Data.data(), Data.length()).get());
-    m_readCondition.wait(m_readLock);
-    readThread->join();
+    REQUIRE(readPort->readData().get());
+    REQUIRE(readPort->getLastErrorMessage().empty());
+    writeThread->join();
+    delete writeThread;
     StopReadWritePorts(readPort, writePort);
 }
 
@@ -176,9 +197,16 @@ TEST_CASE("Do non-blocking UDP ports work?", "[sockets]")
     std::shared_ptr<UDPServer> readPort;
     std::shared_ptr<UDPClient> writePort;
     PrepareReadWriteUDPPorts(readPort, writePort, SocketType::NonBlocking);
-    auto readPortFuture = readPort->readDataCallback(successCallback, Data.length());
-    using namespace std::chrono;
-    std::this_thread::sleep_for(5s);
+    auto& readSocketEvents = readPort->getSocketEventCallbacks();
+    auto& writeSocketEvents = writePort->getSocketEventCallbacks();
+    readSocketEvents.read.postCallback = postReadCallback;
+    ISocket::AsyncSocketResult readPortFuture;
+    writeSocketEvents.write.preCallback = [&readPortFuture, readPort]()
+    {
+        readPortFuture = readPort->readData();
+        using namespace std::chrono;
+        std::this_thread::sleep_for(1s);
+    };
     auto writePortFuture = writePort->writeData((unsigned char*)Data.data(), Data.length());
     REQUIRE(writePortFuture.get());
     REQUIRE(readPortFuture.get());
@@ -194,14 +222,9 @@ TEST_CASE("Can we write on Read UDP Ports and vice versa?", "[sockets]")
     // However, we shouldn't be able to writeData on a readPort and vice versa
     REQUIRE_FALSE(readPort->writeData((unsigned char*)Data.data(), Data.length()).get());
     REQUIRE_FALSE(readPort->getLastErrorMessage().empty());
-    REQUIRE_FALSE(writePort->readDataCallback([&](unsigned char* buffer, size_t size, bool valid)
-    {
-        if(valid)
-        {
-            REQUIRE(false);
-        }
-        return true; // we can return true and still pass the REQUIRE_FALSE because reading the actual bytes will have failed
-    }, Data.length()).get()); // don't bother saving the Future, just call get()
+    auto& socketEvents = writePort->getSocketEventCallbacks();
+    socketEvents.read.postCallback = postReadFailedCallback;
+    REQUIRE_FALSE(writePort->readData().get());
     // We want to make sure an error was logged
     REQUIRE_FALSE(writePort->getLastErrorMessage().empty());
     readPort->close();

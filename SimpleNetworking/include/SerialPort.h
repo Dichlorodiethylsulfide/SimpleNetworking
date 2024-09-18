@@ -60,7 +60,7 @@ public:
         auto flowControl = FlowCtrl(FlowCtrl::none);
         auto stopBits = StopBits(StopBits::one);
         internalOpen(getSocketName(), baudRate, parity, charSize, flowControl, stopBits);
-        return m_initialised && isOpen();
+        return m_initialised && ISocket::open();
     }
 
     

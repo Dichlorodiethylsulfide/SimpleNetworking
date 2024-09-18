@@ -137,7 +137,7 @@ public:
             setSocketTimeOut(SO_RCVTIMEO, m_timeoutMs);
         }
 
-        return true;
+        return ISocket::open();
     }
 
 protected:
@@ -200,7 +200,7 @@ public:
             setSocketTimeOut(SO_RCVTIMEO, m_timeoutMs);
         }
 
-        return true;
+        return ISocket::open();
     }
 
 protected:
